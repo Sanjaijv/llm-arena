@@ -36,6 +36,8 @@ jobs:
 
       - name: Run static checks
         run: pnpm check
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/llm_arena
 
       - name: Build application
         run: pnpm build

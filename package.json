@@ -11,6 +11,7 @@
     "lint:fix": "pnpm lint --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
+    "pretypecheck": "pnpm prisma:generate && next typegen",
     "typecheck": "tsc --noEmit",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck",
     "prisma:generate": "prisma generate",
