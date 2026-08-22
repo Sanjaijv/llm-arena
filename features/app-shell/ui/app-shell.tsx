@@ -2,9 +2,15 @@
 
 import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+
+import {
+  THREAD_HISTORY_CHANGED_EVENT,
+  threadListSchema,
+  type ThreadList,
+} from "@/features/arena/contract";
 
 import styles from "./app-shell.module.css";
 
@@ -17,17 +23,6 @@ const NAVIGATION = [
   { href: "/leaderboard", label: "Leaderboard", icon: "leaderboard" },
 ] as const;
 
-type ThreadListItem = Readonly<{
-  id: string;
-  title: string;
-  updatedAt: string;
-  modelRecords: readonly Readonly<{
-    id: string;
-    label: string;
-    wins: number;
-  }>[];
-}>;
-
 const formatThreadDate = (value: string): string =>
   new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -35,22 +30,31 @@ const formatThreadDate = (value: string): string =>
   }).format(new Date(value));
 
 export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
+  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { isLoaded, isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [threads, setThreads] = useState<readonly ThreadListItem[]>([]);
+  const [threads, setThreads] = useState<ThreadList>([]);
+  const [threadsOwnerId, setThreadsOwnerId] = useState<string | null>(null);
+  const [historyState, setHistoryState] = useState<
+    "idle" | "loading" | "loaded" | "error"
+  >("idle");
 
-  const activeThreadId = searchParams.get("thread");
-  const visibleThreads = isSignedIn ? threads : [];
+  const routeThreadId = pathname.startsWith("/threads/")
+    ? pathname.slice("/threads/".length).split("/")[0]
+    : null;
+  const activeThreadId = routeThreadId ?? searchParams.get("thread");
+  const visibleThreads = isSignedIn && threadsOwnerId === userId ? threads : [];
   const activeThread = visibleThreads.find(({ id }) => id === activeThreadId);
-  const isThreadView = pathname === "/";
+  const isThreadView = pathname === "/" || routeThreadId !== null;
   const pageTitle =
     pathname === "/models"
       ? "Model catalog"
       : pathname === "/leaderboard"
         ? "Leaderboard"
-        : (activeThread?.title ?? "Untitled comparison");
+        : (activeThread?.title ??
+          (routeThreadId ? "Shared comparison" : "Untitled comparison"));
 
   useEffect(() => {
     if (!isMenuOpen) {
@@ -74,33 +78,62 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   }, [isMenuOpen]);
 
   useEffect(() => {
-    if (!isSignedIn) {
+    if (!isLoaded || !isSignedIn || !userId) {
       return;
     }
 
+    let currentRequest: AbortController | null = null;
+
     const loadThreads = async () => {
-      const response = await fetch("/api/threads");
-      if (!response.ok) {
-        return;
-      }
-      const body: unknown = await response.json();
-      if (Array.isArray(body)) {
-        setThreads(
-          body.filter(
-            (thread): thread is ThreadListItem =>
-              typeof thread === "object" &&
-              thread !== null &&
-              "id" in thread &&
-              "title" in thread &&
-              "updatedAt" in thread &&
-              "modelRecords" in thread,
-          ),
-        );
+      currentRequest?.abort();
+      const request = new AbortController();
+      currentRequest = request;
+      setHistoryState("loading");
+
+      try {
+        const response = await fetch("/api/threads", {
+          cache: "no-store",
+          signal: request.signal,
+        });
+        if (!response.ok) {
+          throw new Error("Thread history could not be loaded.");
+        }
+        const parsed = threadListSchema.safeParse(await response.json());
+        if (!parsed.success) {
+          throw new Error("Thread history returned an invalid response.");
+        }
+        setThreads(parsed.data);
+        setThreadsOwnerId(userId);
+        setHistoryState("loaded");
+      } catch (error: unknown) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        setHistoryState("error");
       }
     };
 
     void loadThreads();
-  }, [activeThreadId, isSignedIn]);
+    window.addEventListener(THREAD_HISTORY_CHANGED_EVENT, loadThreads);
+
+    return () => {
+      currentRequest?.abort();
+      window.removeEventListener(THREAD_HISTORY_CHANGED_EVENT, loadThreads);
+    };
+  }, [activeThreadId, isLoaded, isSignedIn, userId]);
+
+  useEffect(() => {
+    const startNewComparison = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setIsMenuOpen(false);
+        router.push("/");
+      }
+    };
+
+    document.addEventListener("keydown", startNewComparison);
+    return () => document.removeEventListener("keydown", startNewComparison);
+  }, [router]);
 
   const selectThread = () => {
     setIsMenuOpen(false);
@@ -154,7 +187,9 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
 
         <nav className={styles.primaryNav} aria-label="Workspace">
           {NAVIGATION.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive =
+              pathname === item.href ||
+              (item.href === "/" && routeThreadId !== null);
             return (
               <Link
                 key={item.href}
@@ -185,7 +220,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
                 <Link
                   key={thread.id}
                   className={`${styles.threadButton} ${isActive ? styles.threadButtonActive : ""}`}
-                  href={`/?thread=${encodeURIComponent(thread.id)}`}
+                  href={`/threads/${encodeURIComponent(thread.id)}`}
                   aria-current={isActive ? "page" : undefined}
                   onClick={selectThread}
                 >
@@ -197,18 +232,45 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
                 </Link>
               );
             })}
+            {isSignedIn &&
+              historyState === "loading" &&
+              visibleThreads.length === 0 && (
+                <p className={styles.historyMessage}>Loading your threads…</p>
+              )}
+            {isSignedIn && historyState === "error" && (
+              <p className={styles.historyMessage} role="status">
+                History is unavailable right now.
+              </p>
+            )}
           </div>
         </section>
 
-        {isSignedIn && visibleThreads.length === 0 && (
-          <div className={styles.sidebarFootnote}>
-            <span aria-hidden="true" />
-            <p>
-              <strong>No saved threads</strong>
-              Your first comparison will appear here.
-            </p>
-          </div>
-        )}
+        {isSignedIn &&
+          historyState === "loaded" &&
+          visibleThreads.length === 0 && (
+            <div className={styles.sidebarFootnote}>
+              <span aria-hidden="true" />
+              <p>
+                <strong>No saved threads</strong>
+                Your first comparison will appear here.
+              </p>
+            </div>
+          )}
+
+        <div className={styles.mobileAccount}>
+          <span>Account</span>
+          {isLoaded && isSignedIn ? (
+            <UserButton />
+          ) : isLoaded ? (
+            <SignInButton mode="modal">
+              <button className={styles.mobileSignInButton} type="button">
+                Sign in
+              </button>
+            </SignInButton>
+          ) : (
+            <small>Loading…</small>
+          )}
+        </div>
       </aside>
 
       <header className={styles.topbar}>
@@ -231,7 +293,10 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
 
         <div className={styles.topbarEnd}>
           {isThreadView && activeThread && (
-            <div className={styles.modelRecords} aria-label="Model win records">
+            <div
+              className={`${styles.modelRecords} ${activeThread.modelRecords.length > 3 ? styles.modelRecordsCompact : ""}`}
+              aria-label="Model win records"
+            >
               {activeThread.modelRecords.map((record) => (
                 <span
                   key={record.id}
@@ -248,10 +313,12 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           <div className={styles.account}>
             {isLoaded && isSignedIn ? (
               <UserButton />
-            ) : (
+            ) : isLoaded ? (
               <SignInButton mode="modal">
                 <button type="button">Sign in</button>
               </SignInButton>
+            ) : (
+              <span className={styles.accountPlaceholder} aria-hidden="true" />
             )}
           </div>
         </div>
