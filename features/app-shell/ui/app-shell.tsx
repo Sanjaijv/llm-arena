@@ -2,7 +2,7 @@
 
 import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
@@ -17,42 +17,33 @@ const NAVIGATION = [
   { href: "/leaderboard", label: "Leaderboard", icon: "leaderboard" },
 ] as const;
 
-const THREADS = [
-  {
-    id: "garden-plan",
-    title: "Planning a kitchen garden",
-    date: "Today",
-  },
-  {
-    id: "product-copy",
-    title: "Rewrite product launch copy",
-    date: "Yesterday",
-  },
-  {
-    id: "weekend-trip",
-    title: "A quiet weekend in Kyoto",
-    date: "Aug 19",
-  },
-  {
-    id: "database-indexes",
-    title: "Explain database indexes",
-    date: "Aug 17",
-  },
-] as const;
+type ThreadListItem = Readonly<{
+  id: string;
+  title: string;
+  updatedAt: string;
+  modelRecords: readonly Readonly<{
+    id: string;
+    label: string;
+    wins: number;
+  }>[];
+}>;
 
-const MODEL_RECORDS = [
-  { label: "Model A", wins: 3 },
-  { label: "Model B", wins: 1 },
-  { label: "Model C", wins: 2 },
-] as const;
+const formatThreadDate = (value: string): string =>
+  new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(value));
 
 export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { isLoaded, isSignedIn } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [threads, setThreads] = useState<readonly ThreadListItem[]>([]);
 
-  const activeThread = THREADS.find(({ id }) => id === activeThreadId);
+  const activeThreadId = searchParams.get("thread");
+  const visibleThreads = isSignedIn ? threads : [];
+  const activeThread = visibleThreads.find(({ id }) => id === activeThreadId);
   const isThreadView = pathname === "/";
   const pageTitle =
     pathname === "/models"
@@ -82,13 +73,40 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
     };
   }, [isMenuOpen]);
 
-  const selectThread = (threadId: string) => {
-    setActiveThreadId(threadId);
+  useEffect(() => {
+    if (!isSignedIn) {
+      return;
+    }
+
+    const loadThreads = async () => {
+      const response = await fetch("/api/threads");
+      if (!response.ok) {
+        return;
+      }
+      const body: unknown = await response.json();
+      if (Array.isArray(body)) {
+        setThreads(
+          body.filter(
+            (thread): thread is ThreadListItem =>
+              typeof thread === "object" &&
+              thread !== null &&
+              "id" in thread &&
+              "title" in thread &&
+              "updatedAt" in thread &&
+              "modelRecords" in thread,
+          ),
+        );
+      }
+    };
+
+    void loadThreads();
+  }, [activeThreadId, isSignedIn]);
+
+  const selectThread = () => {
     setIsMenuOpen(false);
   };
 
   const startNewThread = () => {
-    setActiveThreadId(null);
     setIsMenuOpen(false);
   };
 
@@ -158,22 +176,22 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         <section className={styles.history} aria-labelledby="history-heading">
           <div className={styles.historyHeading}>
             <h2 id="history-heading">Recent threads</h2>
-            <span>Preview</span>
+            <span>{isSignedIn ? "Synced" : "Sign in"}</span>
           </div>
           <div className={styles.threadList}>
-            {THREADS.map((thread) => {
+            {visibleThreads.map((thread) => {
               const isActive = thread.id === activeThreadId && isThreadView;
               return (
                 <Link
                   key={thread.id}
                   className={`${styles.threadButton} ${isActive ? styles.threadButtonActive : ""}`}
-                  href="/"
+                  href={`/?thread=${encodeURIComponent(thread.id)}`}
                   aria-current={isActive ? "page" : undefined}
-                  onClick={() => selectThread(thread.id)}
+                  onClick={selectThread}
                 >
                   <span>
                     <strong>{thread.title}</strong>
-                    <small>{thread.date}</small>
+                    <small>{formatThreadDate(thread.updatedAt)}</small>
                   </span>
                   <Icon name="chevron" />
                 </Link>
@@ -182,13 +200,15 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           </div>
         </section>
 
-        <div className={styles.sidebarFootnote}>
-          <span aria-hidden="true" />
-          <p>
-            <strong>History preview</strong>
-            Threads will sync after persistence is built.
-          </p>
-        </div>
+        {isSignedIn && visibleThreads.length === 0 && (
+          <div className={styles.sidebarFootnote}>
+            <span aria-hidden="true" />
+            <p>
+              <strong>No saved threads</strong>
+              Your first comparison will appear here.
+            </p>
+          </div>
+        )}
       </aside>
 
       <header className={styles.topbar}>
@@ -210,11 +230,11 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         </div>
 
         <div className={styles.topbarEnd}>
-          {isThreadView && (
+          {isThreadView && activeThread && (
             <div className={styles.modelRecords} aria-label="Model win records">
-              {MODEL_RECORDS.map((record) => (
+              {activeThread.modelRecords.map((record) => (
                 <span
-                  key={record.label}
+                  key={record.id}
                   title={`${record.label}: ${record.wins} wins`}
                 >
                   <i aria-hidden="true" />
