@@ -5,15 +5,12 @@ import { prisma } from "@/features/database/server/client";
 
 import { isModelRunActive } from "./model-runs";
 
-const reconcileStaleRuns = async (
-  userId: string,
-  threadId: string,
-): Promise<void> => {
+const reconcileStaleRuns = async (threadId: string): Promise<void> => {
   const staleBefore = new Date(Date.now() - 3 * 60_000);
   const staleRuns = (
     await prisma.modelRun.findMany({
       where: {
-        comparison: { threadId, userId, status: "IN_PROGRESS" },
+        comparison: { threadId, status: "IN_PROGRESS" },
         status: "STREAMING",
         startedAt: { lt: staleBefore },
       },
@@ -69,13 +66,13 @@ const reconcileStaleRuns = async (
   });
 };
 
-export const getThreadSnapshot = async (
-  userId: string,
+export const getThread = async (
   threadId: string,
-): Promise<ThreadSnapshot | null> => {
-  await reconcileStaleRuns(userId, threadId);
-  const thread = await prisma.thread.findFirst({
-    where: { id: threadId, userId },
+  viewerUserId: string | null = null,
+): Promise<Readonly<{ snapshot: ThreadSnapshot; isOwner: boolean }> | null> => {
+  await reconcileStaleRuns(threadId);
+  const thread = await prisma.thread.findUnique({
+    where: { id: threadId },
     include: {
       comparisons: {
         orderBy: { sequence: "asc" },
@@ -95,34 +92,37 @@ export const getThreadSnapshot = async (
   }
 
   return {
-    id: thread.id,
-    title: thread.title,
-    turns: thread.comparisons.map((comparison) => ({
-      comparisonId: comparison.id,
-      sequence: comparison.sequence,
-      prompt: comparison.prompt,
-      voteRunId: comparison.vote?.selectedRunId ?? null,
-      runs: comparison.runs.map((run) => ({
-        id: run.id,
-        position: run.position,
-        model: {
-          id: run.requestedModel,
-          name: run.model?.displayName ?? run.requestedModel,
-          provider: run.requestedModel.split("/")[0] || "OpenRouter",
-          contextLength: run.model?.contextLength ?? null,
-          promptPrice: 0,
-          completionPrice: 0,
-        },
-        status: run.status,
-        content: run.content ?? "",
-        resolvedModel: run.resolvedModel,
-        durationMs: run.durationMs,
-        timeToFirstTokenMs: run.timeToFirstTokenMs,
-        completionTokens: run.completionTokens,
-        totalTokens: run.totalTokens,
-        errorCode: run.errorCode,
+    isOwner: viewerUserId !== null && thread.userId === viewerUserId,
+    snapshot: {
+      id: thread.id,
+      title: thread.title,
+      turns: thread.comparisons.map((comparison) => ({
+        comparisonId: comparison.id,
+        sequence: comparison.sequence,
+        prompt: comparison.prompt,
+        voteRunId: comparison.vote?.selectedRunId ?? null,
+        runs: comparison.runs.map((run) => ({
+          id: run.id,
+          position: run.position,
+          model: {
+            id: run.requestedModel,
+            name: run.model?.displayName ?? run.requestedModel,
+            provider: run.requestedModel.split("/")[0] || "OpenRouter",
+            contextLength: run.model?.contextLength ?? null,
+            promptPrice: 0,
+            completionPrice: 0,
+          },
+          status: run.status,
+          content: run.content ?? "",
+          resolvedModel: run.resolvedModel,
+          durationMs: run.durationMs,
+          timeToFirstTokenMs: run.timeToFirstTokenMs,
+          completionTokens: run.completionTokens,
+          totalTokens: run.totalTokens,
+          errorCode: run.errorCode,
+        })),
       })),
-    })),
+    },
   };
 };
 
@@ -136,16 +136,19 @@ export const listThreads = async (userId: string) => {
       title: true,
       updatedAt: true,
       comparisons: {
-        where: { vote: { isNot: null } },
+        orderBy: { sequence: "asc" },
         select: {
+          runs: {
+            orderBy: { position: "asc" },
+            select: {
+              id: true,
+              requestedModel: true,
+              model: { select: { displayName: true } },
+            },
+          },
           vote: {
             select: {
-              selectedRun: {
-                select: {
-                  requestedModel: true,
-                  model: { select: { displayName: true } },
-                },
-              },
+              selectedRunId: true,
             },
           },
         },
@@ -156,17 +159,15 @@ export const listThreads = async (userId: string) => {
   return threads.map((thread) => {
     const wins = new Map<string, { label: string; wins: number }>();
     for (const comparison of thread.comparisons) {
-      const selectedRun = comparison.vote?.selectedRun;
-      if (!selectedRun) {
-        continue;
+      for (const run of comparison.runs) {
+        const current = wins.get(run.requestedModel);
+        wins.set(run.requestedModel, {
+          label: run.model?.displayName ?? run.requestedModel,
+          wins:
+            (current?.wins ?? 0) +
+            Number(comparison.vote?.selectedRunId === run.id),
+        });
       }
-      const label =
-        selectedRun.model?.displayName ?? selectedRun.requestedModel;
-      const current = wins.get(selectedRun.requestedModel);
-      wins.set(selectedRun.requestedModel, {
-        label,
-        wins: (current?.wins ?? 0) + 1,
-      });
     }
 
     return {

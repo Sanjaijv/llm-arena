@@ -1,12 +1,13 @@
 "use client";
 
+import { SignInButton } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
+  THREAD_HISTORY_CHANGED_EVENT,
   comparisonResponseSchema,
   modelStreamEventSchema,
-  threadSnapshotSchema,
   type ComparisonResponse,
   type ModelStreamEvent,
   type ThreadSnapshot,
@@ -20,6 +21,9 @@ type UiTurn = ThreadSnapshot["turns"][number];
 type PendingCreation = Readonly<{ signature: string; requestId: string }>;
 
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+
+const refreshThreadHistory = () =>
+  window.dispatchEvent(new Event(THREAD_HISTORY_CHANGED_EVENT));
 
 const readErrorMessage = async (response: Response): Promise<string> => {
   const body: unknown = await response.json().catch(() => null);
@@ -76,20 +80,29 @@ const toUiTurn = (comparison: ComparisonResponse): UiTurn => ({
 });
 
 export function Arena({
+  canInteract,
+  initialThread,
   models,
-  requestedThreadId,
 }: Readonly<{
+  canInteract: boolean;
+  initialThread: ThreadSnapshot | null;
   models: readonly FreeModel[];
-  requestedThreadId: string | null;
 }>) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<readonly string[]>(() =>
     models.slice(0, 3).map(({ id }) => id),
   );
   const [prompt, setPrompt] = useState("");
-  const [threadId, setThreadId] = useState<string | null>(null);
-  const [turns, setTurns] = useState<readonly UiTurn[]>([]);
+  const [threadId, setThreadId] = useState<string | null>(
+    initialThread?.id ?? null,
+  );
+  const [turns, setTurns] = useState<readonly UiTurn[]>(
+    initialThread?.turns ?? [],
+  );
   const [pageError, setPageError] = useState<string | null>(null);
+  const [shareState, setShareState] = useState<"idle" | "copied" | "error">(
+    "idle",
+  );
   const [isCreating, setIsCreating] = useState(false);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
@@ -231,51 +244,32 @@ export function Arena({
   });
 
   useEffect(() => {
-    if (requestedThreadId === activeThreadId.current) {
+    const nextThreadId = initialThread?.id ?? null;
+    if (nextThreadId === activeThreadId.current) {
       return;
     }
 
-    activeThreadId.current = requestedThreadId;
+    activeThreadId.current = nextThreadId;
     pendingCreation.current = null;
-    setThreadId(null);
-    setTurns([]);
+    setThreadId(nextThreadId);
+    setTurns(initialThread?.turns ?? []);
     setPrompt("");
     setPageError(null);
+    setShareState("idle");
     setIsCreating(false);
     setIsPickerOpen(false);
     setModelSearch("");
     setSelectedIds(models.slice(0, 3).map(({ id }) => id));
 
-    if (!requestedThreadId) {
+    if (!initialThread || !canInteract) {
       return;
     }
 
-    let ignoreResponse = false;
-
-    const loadThread = async () => {
-      const response = await fetch(`/api/threads/${requestedThreadId}`);
-      if (ignoreResponse) {
-        return;
-      }
-      if (!response.ok) {
-        setPageError(await readErrorMessage(response));
-        return;
-      }
-
-      const thread = threadSnapshotSchema.parse(await response.json());
-      setThreadId(thread.id);
-      setTurns(thread.turns);
-      const pendingRuns = thread.turns.flatMap((turn) =>
-        turn.runs.filter(({ status }) => status === "PENDING"),
-      );
-      pendingRuns.forEach((run) => streamPendingRun(run.id));
-    };
-
-    void loadThread();
-    return () => {
-      ignoreResponse = true;
-    };
-  }, [models, requestedThreadId]);
+    const pendingRuns = initialThread.turns.flatMap((turn) =>
+      turn.runs.filter(({ status }) => status === "PENDING"),
+    );
+    pendingRuns.forEach((run) => streamPendingRun(run.id));
+  }, [canInteract, initialThread, models]);
 
   useEffect(() => {
     if (!isPickerOpen) {
@@ -353,7 +347,8 @@ export function Arena({
       setTurns((current) => [...current, toUiTurn(comparison)]);
       pendingCreation.current = null;
       setPrompt("");
-      router.replace(`/?thread=${encodeURIComponent(comparison.threadId)}`);
+      router.replace(`/threads/${encodeURIComponent(comparison.threadId)}`);
+      refreshThreadHistory();
       comparison.runs.forEach((run) => void streamRun(run.id));
     } catch (error: unknown) {
       setPageError(
@@ -386,6 +381,7 @@ export function Arena({
           : turn,
       ),
     );
+    refreshThreadHistory();
   };
 
   const cancelRun = async (runId: string) => {
@@ -427,155 +423,209 @@ export function Arena({
     setSelectedIds((current) => current.filter((id) => id !== modelId));
   };
 
+  const copyShareLink = async () => {
+    if (!threadId) {
+      return;
+    }
+
+    try {
+      const url = `${window.location.origin}/threads/${encodeURIComponent(threadId)}`;
+      await navigator.clipboard.writeText(url);
+      setShareState("copied");
+    } catch {
+      setShareState("error");
+    }
+  };
+
   return (
     <div className={styles.page}>
       <header className={styles.heading}>
         <div>
-          <p className={styles.eyebrow}>Arena</p>
-          <h2>Compare answers, not logos.</h2>
+          <p className={styles.eyebrow}>
+            {initialThread ? "Shared comparison" : "Arena"}
+          </p>
+          <h2>
+            {initialThread
+              ? initialThread.title
+              : "Compare answers, not logos."}
+          </h2>
           <p>
-            Send one prompt to up to three free models. Every answer streams and
-            fails independently.
+            {initialThread
+              ? "The same prompt, answered independently by each selected model."
+              : "Send one prompt to up to three free models. Every answer streams and fails independently."}
           </p>
         </div>
-        <span className={styles.liveBadge}>Live free models</span>
+        <div className={styles.headingActions}>
+          {threadId && (
+            <button type="button" onClick={() => void copyShareLink()}>
+              {shareState === "copied"
+                ? "Link copied"
+                : shareState === "error"
+                  ? "Copy failed"
+                  : "Copy share link"}
+            </button>
+          )}
+          <span className={styles.liveBadge}>
+            {canInteract ? "Live free models" : "Public thread"}
+          </span>
+        </div>
       </header>
 
-      <section className={styles.promptCard} aria-labelledby="prompt-heading">
-        <div className={styles.cardHeading}>
-          <div>
-            <span>01</span>
+      {canInteract ? (
+        <section className={styles.promptCard} aria-labelledby="prompt-heading">
+          <div className={styles.cardHeading}>
             <div>
-              <h3 id="prompt-heading">Choose your models</h3>
-              <p>Up to three, validated against OpenRouter when you send.</p>
+              <span>01</span>
+              <div>
+                <h3 id="prompt-heading">Choose your models</h3>
+                <p>Up to three, validated against OpenRouter when you send.</p>
+              </div>
             </div>
+            <small>{selectedIds.length} of 3</small>
           </div>
-          <small>{selectedIds.length} of 3</small>
-        </div>
 
-        <div className={styles.chips}>
-          {selectedModels.map((model) => (
-            <span key={model.id}>
-              <i aria-hidden="true" />
-              {model.name}
-              <button
-                type="button"
-                aria-label={`Remove ${model.name}`}
-                disabled={hasActiveRun}
-                onClick={() => removeModel(model.id)}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-          <button
-            ref={pickerTriggerRef}
-            type="button"
-            aria-expanded={isPickerOpen}
-            aria-controls="model-picker"
-            disabled={
-              (selectedIds.length >= 3 && !isPickerOpen) || hasActiveRun
-            }
-            onClick={() => {
-              setIsPickerOpen((open) => !open);
-              if (isPickerOpen) {
-                setModelSearch("");
+          <div className={styles.chips}>
+            {selectedModels.map((model) => (
+              <span key={model.id}>
+                <i aria-hidden="true" />
+                {model.name}
+                <button
+                  type="button"
+                  aria-label={`Remove ${model.name}`}
+                  disabled={hasActiveRun}
+                  onClick={() => removeModel(model.id)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              ref={pickerTriggerRef}
+              type="button"
+              aria-expanded={isPickerOpen}
+              aria-controls="model-picker"
+              disabled={
+                (selectedIds.length >= 3 && !isPickerOpen) || hasActiveRun
+              }
+              onClick={() => {
+                setIsPickerOpen((open) => !open);
+                if (isPickerOpen) {
+                  setModelSearch("");
+                }
+              }}
+            >
+              + Add model
+            </button>
+          </div>
+
+          {isPickerOpen && (
+            <div
+              ref={pickerRef}
+              id="model-picker"
+              className={styles.picker}
+              role="dialog"
+              aria-label="Choose a free model"
+            >
+              <label>
+                <span className="sr-only">Search free models</span>
+                <input
+                  type="search"
+                  value={modelSearch}
+                  placeholder="Search free models…"
+                  onChange={(event) => setModelSearch(event.target.value)}
+                />
+              </label>
+              <div className={styles.pickerList}>
+                {visibleModels.map((model) => {
+                  const selected = selectedIds.includes(model.id);
+                  return (
+                    <button
+                      key={model.id}
+                      type="button"
+                      disabled={selected || selectedIds.length >= 3}
+                      onClick={() => addModel(model.id)}
+                    >
+                      <span>
+                        <strong>{model.name}</strong>
+                        <small>{model.id}</small>
+                      </span>
+                      <span>
+                        {selected
+                          ? "Selected"
+                          : formatContext(model.contextLength)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <label className={styles.promptLabel} htmlFor="arena-prompt">
+            <span>Your prompt</span>
+            <small>{prompt.length.toLocaleString()} / 8,000</small>
+          </label>
+          <textarea
+            id="arena-prompt"
+            rows={4}
+            maxLength={8_000}
+            value={prompt}
+            disabled={hasActiveRun || isCreating || models.length === 0}
+            placeholder="Ask something worth comparing…"
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                void submitPrompt();
               }
             }}
-          >
-            + Add model
-          </button>
-        </div>
-
-        {isPickerOpen && (
-          <div
-            ref={pickerRef}
-            id="model-picker"
-            className={styles.picker}
-            role="dialog"
-            aria-label="Choose a free model"
-          >
-            <label>
-              <span className="sr-only">Search free models</span>
-              <input
-                type="search"
-                value={modelSearch}
-                placeholder="Search free models…"
-                onChange={(event) => setModelSearch(event.target.value)}
-              />
-            </label>
-            <div className={styles.pickerList}>
-              {visibleModels.map((model) => {
-                const selected = selectedIds.includes(model.id);
-                return (
-                  <button
-                    key={model.id}
-                    type="button"
-                    disabled={selected || selectedIds.length >= 3}
-                    onClick={() => addModel(model.id)}
-                  >
-                    <span>
-                      <strong>{model.name}</strong>
-                      <small>{model.id}</small>
-                    </span>
-                    <span>
-                      {selected
-                        ? "Selected"
-                        : formatContext(model.contextLength)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+          />
+          <div className={styles.promptFooter}>
+            <p>
+              {hasActiveRun
+                ? "Wait for this turn to settle before sending a follow-up."
+                : "Ctrl/⌘ + Enter to send."}
+            </p>
+            <button
+              type="button"
+              disabled={
+                isCreating ||
+                hasActiveRun ||
+                !prompt.trim() ||
+                selectedIds.length === 0
+              }
+              onClick={() => void submitPrompt()}
+            >
+              {isCreating
+                ? "Starting…"
+                : `Send to ${selectedIds.length} model${selectedIds.length === 1 ? "" : "s"}`}
+            </button>
           </div>
-        )}
-
-        <label className={styles.promptLabel} htmlFor="arena-prompt">
-          <span>Your prompt</span>
-          <small>{prompt.length.toLocaleString()} / 8,000</small>
-        </label>
-        <textarea
-          id="arena-prompt"
-          rows={4}
-          maxLength={8_000}
-          value={prompt}
-          disabled={hasActiveRun || isCreating || models.length === 0}
-          placeholder="Ask something worth comparing…"
-          onChange={(event) => setPrompt(event.target.value)}
-          onKeyDown={(event) => {
-            if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-              event.preventDefault();
-              void submitPrompt();
-            }
-          }}
-        />
-        <div className={styles.promptFooter}>
-          <p>
-            {hasActiveRun
-              ? "Wait for this turn to settle before sending a follow-up."
-              : "Ctrl/⌘ + Enter to send."}
-          </p>
-          <button
-            type="button"
-            disabled={
-              isCreating ||
-              hasActiveRun ||
-              !prompt.trim() ||
-              selectedIds.length === 0
-            }
-            onClick={() => void submitPrompt()}
-          >
-            {isCreating
-              ? "Starting…"
-              : `Send to ${selectedIds.length} model${selectedIds.length === 1 ? "" : "s"}`}
-          </button>
-        </div>
-        {pageError && (
-          <p className={styles.pageError} role="alert">
-            {pageError}
-          </p>
-        )}
-      </section>
+          {pageError && (
+            <p className={styles.pageError} role="alert">
+              {pageError}
+            </p>
+          )}
+        </section>
+      ) : threadId ? (
+        <aside className={styles.readOnlyNotice}>
+          <div>
+            <strong>Shared read-only thread</strong>
+            <span>Anyone with this link can see every prompt and answer.</span>
+          </div>
+          <span>Only the owner can continue this thread or vote.</span>
+        </aside>
+      ) : (
+        <aside className={styles.signInNotice}>
+          <div>
+            <strong>Sign in to start comparing</strong>
+            <span>Sending prompts and voting require an account.</span>
+          </div>
+          <SignInButton mode="modal">
+            <button type="button">Sign in</button>
+          </SignInButton>
+        </aside>
+      )}
 
       <section className={styles.turns} aria-label="Model comparisons">
         {turns.length === 0 ? (
@@ -589,6 +639,7 @@ export function Arena({
             <Turn
               key={turn.comparisonId}
               turn={turn}
+              canInteract={canInteract}
               onCancel={(runId) => void cancelRun(runId)}
               onVote={(runId) => void castVote(turn.comparisonId, runId)}
             />
@@ -600,11 +651,13 @@ export function Arena({
 }
 
 function Turn({
+  canInteract,
   turn,
   onCancel,
   onVote,
 }: Readonly<{
   turn: UiTurn;
+  canInteract: boolean;
   onCancel: (runId: string) => void;
   onVote: (runId: string) => void;
 }>) {
@@ -614,7 +667,8 @@ function Turn({
   const completedCount = turn.runs.filter(
     ({ status }) => status === "COMPLETED",
   ).length;
-  const canVote = allSettled && completedCount >= 2 && !turn.voteRunId;
+  const canVote =
+    canInteract && allSettled && completedCount >= 2 && !turn.voteRunId;
 
   return (
     <article className={styles.turn}>
@@ -670,15 +724,16 @@ function Turn({
                 )}
               </div>
 
-              {(run.status === "PENDING" || run.status === "STREAMING") && (
-                <button
-                  className={styles.cancelButton}
-                  type="button"
-                  onClick={() => onCancel(run.id)}
-                >
-                  Cancel this model
-                </button>
-              )}
+              {canInteract &&
+                (run.status === "PENDING" || run.status === "STREAMING") && (
+                  <button
+                    className={styles.cancelButton}
+                    type="button"
+                    onClick={() => onCancel(run.id)}
+                  >
+                    Cancel this model
+                  </button>
+                )}
 
               <dl className={styles.metrics}>
                 <div>
@@ -695,16 +750,18 @@ function Turn({
                 </div>
               </dl>
 
-              {(canVote || isWinner) && run.status === "COMPLETED" && (
-                <button
-                  className={styles.voteButton}
-                  type="button"
-                  disabled={isWinner}
-                  onClick={() => onVote(run.id)}
-                >
-                  {isWinner ? "Selected winner" : "Vote for this answer"}
-                </button>
-              )}
+              {canInteract &&
+                (canVote || isWinner) &&
+                run.status === "COMPLETED" && (
+                  <button
+                    className={styles.voteButton}
+                    type="button"
+                    disabled={isWinner}
+                    onClick={() => onVote(run.id)}
+                  >
+                    {isWinner ? "Selected winner" : "Vote for this answer"}
+                  </button>
+                )}
             </section>
           );
         })}

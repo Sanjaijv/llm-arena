@@ -20,6 +20,26 @@
   max-width: 650px;
 }
 
+.headingActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.headingActions > button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 700;
+}
+
 .eyebrow {
   margin: 0 0 12px;
   color: var(--muted-soft);
@@ -70,6 +90,53 @@
   margin-top: 44px;
   padding: 25px;
   border-radius: 15px;
+}
+
+.readOnlyNotice,
+.signInNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 32px;
+  padding: 17px 19px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.readOnlyNotice div,
+.signInNotice div {
+  display: grid;
+  gap: 4px;
+}
+
+.readOnlyNotice strong,
+.signInNotice strong {
+  font-size: 11px;
+}
+
+.readOnlyNotice span,
+.signInNotice span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.readOnlyNotice > span {
+  text-align: right;
+}
+
+.signInNotice button {
+  min-height: 38px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 680;
 }
 
 .cardHeading > div {
@@ -540,9 +607,24 @@
     display: block;
   }
 
+  .headingActions {
+    justify-content: flex-start;
+    margin-top: 20px;
+  }
+
   .liveBadge {
     display: inline-flex;
-    margin-top: 20px;
+  }
+
+  .readOnlyNotice,
+  .signInNotice {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .readOnlyNotice > span {
+    text-align: left;
   }
 
   .promptCard {

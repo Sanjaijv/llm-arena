@@ -110,5 +110,24 @@ export const threadSnapshotSchema = z.object({
 
 export type ThreadSnapshot = z.infer<typeof threadSnapshotSchema>;
 
+export const threadListSchema = z.array(
+  z.object({
+    id: z.string(),
+    title: z.string(),
+    updatedAt: z.iso.datetime(),
+    modelRecords: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        wins: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+);
+
+export type ThreadList = z.infer<typeof threadListSchema>;
+
+export const THREAD_HISTORY_CHANGED_EVENT = "arena:thread-history-changed";
+
 export const encodeModelStreamEvent = (event: ModelStreamEvent): Uint8Array =>
   new TextEncoder().encode(`${JSON.stringify(event)}\n`);
