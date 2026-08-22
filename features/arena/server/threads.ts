@@ -5,12 +5,15 @@ import { prisma } from "@/features/database/server/client";
 
 import { isModelRunActive } from "./model-runs";
 
-const reconcileStaleRuns = async (threadId: string): Promise<void> => {
+const reconcileStaleRuns = async (
+  userId: string,
+  threadId: string,
+): Promise<void> => {
   const staleBefore = new Date(Date.now() - 3 * 60_000);
   const staleRuns = (
     await prisma.modelRun.findMany({
       where: {
-        comparison: { threadId, status: "IN_PROGRESS" },
+        comparison: { threadId, userId, status: "IN_PROGRESS" },
         status: "STREAMING",
         startedAt: { lt: staleBefore },
       },
@@ -70,7 +73,9 @@ export const getThread = async (
   threadId: string,
   viewerUserId: string | null = null,
 ): Promise<Readonly<{ snapshot: ThreadSnapshot; isOwner: boolean }> | null> => {
-  await reconcileStaleRuns(threadId);
+  if (viewerUserId !== null) {
+    await reconcileStaleRuns(viewerUserId, threadId);
+  }
   const thread = await prisma.thread.findUnique({
     where: { id: threadId },
     include: {
@@ -157,24 +162,31 @@ export const listThreads = async (userId: string) => {
   });
 
   return threads.map((thread) => {
-    const wins = new Map<string, { label: string; wins: number }>();
-    for (const comparison of thread.comparisons) {
-      for (const run of comparison.runs) {
-        const current = wins.get(run.requestedModel);
-        wins.set(run.requestedModel, {
-          label: run.model?.displayName ?? run.requestedModel,
-          wins:
-            (current?.wins ?? 0) +
-            Number(comparison.vote?.selectedRunId === run.id),
-        });
-      }
-    }
+    const wins = thread.comparisons
+      .flatMap((comparison) =>
+        comparison.runs.map((run) => ({
+          run,
+          isWinner: comparison.vote?.selectedRunId === run.id,
+        })),
+      )
+      .reduce<
+        Readonly<Record<string, Readonly<{ label: string; wins: number }>>>
+      >((records, { run, isWinner }) => {
+        const current = records[run.requestedModel];
+        return {
+          ...records,
+          [run.requestedModel]: {
+            label: run.model?.displayName ?? run.requestedModel,
+            wins: (current?.wins ?? 0) + Number(isWinner),
+          },
+        };
+      }, {});
 
     return {
       id: thread.id,
       title: thread.title,
       updatedAt: thread.updatedAt,
-      modelRecords: [...wins.entries()].map(([id, record]) => ({
+      modelRecords: Object.entries(wins).map(([id, record]) => ({
         id,
         ...record,
       })),
