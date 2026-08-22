@@ -27,6 +27,7 @@ model Model {
   provider        String     @db.VarChar(50)
   providerModelId String     @db.VarChar(255)
   displayName     String     @db.VarChar(120)
+  contextLength   Int?
   isActive        Boolean    @default(true)
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
@@ -37,20 +38,40 @@ model Model {
   @@map("models")
 }
 
+model Thread {
+  id          String       @id @default(cuid())
+  userId      String       @db.VarChar(255)
+  title       String       @db.VarChar(160)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  comparisons Comparison[]
+
+  @@index([userId, updatedAt])
+  @@map("threads")
+}
+
 model Comparison {
-  id          String           @id @default(cuid())
-  userId      String           @db.VarChar(255)
-  prompt      String           @db.Text
-  status      ComparisonStatus @default(IN_PROGRESS)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  completedAt DateTime?
-  runs        ModelRun[]
-  vote        Vote?            @relation("ComparisonVote")
+  id                String           @id @default(cuid())
+  threadId          String
+  userId            String           @db.VarChar(255)
+  sequence          Int
+  clientRequestId   String           @db.Uuid
+  requestFingerprint String          @db.Char(64)
+  prompt            String           @db.Text
+  status            ComparisonStatus @default(IN_PROGRESS)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  completedAt       DateTime?
+  thread            Thread           @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  runs              ModelRun[]
+  vote              Vote?            @relation("ComparisonVote")
 
   @@unique([id, status])
+  @@unique([threadId, sequence])
+  @@unique([userId, clientRequestId])
   @@index([userId, createdAt])
   @@index([status, createdAt])
+  @@index([threadId, sequence])
   @@map("comparisons")
 }
 
@@ -60,6 +81,7 @@ model ModelRun {
   modelId            String?
   position           Int
   requestedModel     String         @db.VarChar(255)
+  resolvedModel      String?        @db.VarChar(255)
   status             ModelRunStatus @default(PENDING)
   content            String?        @db.Text
   providerRequestId  String?        @db.VarChar(255)
