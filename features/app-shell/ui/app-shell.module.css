@@ -431,12 +431,18 @@
   .sidebar {
     width: min(310px, calc(100vw - 44px));
     box-shadow: 18px 0 50px rgb(0 0 0 / 30%);
+    pointer-events: none;
     transform: translateX(-105%);
-    transition: transform 220ms ease;
+    visibility: hidden;
+    transition:
+      transform 220ms ease,
+      visibility 0s;
   }
 
   .sidebarOpen {
+    pointer-events: auto;
     transform: translateX(0);
+    visibility: visible;
   }
 
   .closeButton,

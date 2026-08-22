@@ -4,7 +4,7 @@ import { SignInButton, UserButton, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import styles from "./app-shell.module.css";
 
@@ -51,6 +51,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   const { isLoaded, isSignedIn } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
 
   const activeThread = THREADS.find(({ id }) => id === activeThreadId);
   const isThreadView = pathname === "/";
@@ -69,6 +70,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setIsMenuOpen(false);
+        window.requestAnimationFrame(() => menuButtonRef.current?.focus());
       }
     };
 
@@ -81,6 +83,11 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       document.body.style.overflow = previousOverflow;
     };
   }, [isMenuOpen]);
+
+  const closeMenu = () => {
+    setIsMenuOpen(false);
+    window.requestAnimationFrame(() => menuButtonRef.current?.focus());
+  };
 
   const selectThread = (threadId: string) => {
     setActiveThreadId(threadId);
@@ -99,7 +106,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
         type="button"
         aria-label="Close navigation"
         tabIndex={isMenuOpen ? 0 : -1}
-        onClick={() => setIsMenuOpen(false)}
+        onClick={closeMenu}
       />
 
       <aside
@@ -118,7 +125,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
             className={styles.closeButton}
             type="button"
             aria-label="Close navigation"
-            onClick={() => setIsMenuOpen(false)}
+            onClick={closeMenu}
           >
             <Icon name="close" />
           </button>
@@ -194,6 +201,7 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
       <header className={styles.topbar}>
         <div className={styles.topbarStart}>
           <button
+            ref={menuButtonRef}
             className={styles.menuButton}
             type="button"
             aria-label="Open navigation"
