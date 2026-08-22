@@ -1,0 +1,12 @@
+.agents
+.claude
+.next
+AGENTS.md
+build
+CLAUDE.md
+coverage
+generated
+node_modules
+out
+pnpm-lock.yaml
+*-report.md

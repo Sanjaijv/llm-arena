@@ -7,9 +7,15 @@
     "prebuild": "prisma generate",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "pnpm lint --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "pretypecheck": "pnpm prisma:generate && next typegen",
     "typecheck": "tsc --noEmit",
-    "prisma:generate": "prisma generate"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
   },
   "engines": {
     "node": ">=22.21.0 <23 || >=24.5.0"
@@ -37,6 +43,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
+    "prettier": "3.9.6",
     "prisma": "^7.9.1",
     "tailwindcss": "^4",
     "typescript": "^5"
