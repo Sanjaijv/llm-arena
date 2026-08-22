@@ -38,9 +38,7 @@ const safeStreamError = (): ModelStreamEvent => ({
 const isChatStream = (
   value: unknown,
 ): value is AsyncIterable<ChatStreamChunk> =>
-  typeof value === "object" &&
-  value !== null &&
-  Symbol.asyncIterator in value;
+  typeof value === "object" && value !== null && Symbol.asyncIterator in value;
 
 export const createModelResponseStream = (
   prompt: string,

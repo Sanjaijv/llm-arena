@@ -6,3 +6,96 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum ComparisonStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ModelRunStatus {
+  PENDING
+  STREAMING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Model {
+  id              String     @id @default(cuid())
+  provider        String     @db.VarChar(50)
+  providerModelId String     @db.VarChar(255)
+  displayName     String     @db.VarChar(120)
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  runs            ModelRun[]
+
+  @@unique([provider, providerModelId])
+  @@index([isActive])
+  @@map("models")
+}
+
+model Comparison {
+  id          String           @id @default(cuid())
+  userId      String           @db.VarChar(255)
+  prompt      String           @db.Text
+  status      ComparisonStatus @default(IN_PROGRESS)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  completedAt DateTime?
+  runs        ModelRun[]
+  vote        Vote?            @relation("ComparisonVote")
+
+  @@unique([id, status])
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("comparisons")
+}
+
+model ModelRun {
+  id                 String         @id @default(cuid())
+  comparisonId       String
+  modelId            String?
+  position           Int
+  requestedModel     String         @db.VarChar(255)
+  status             ModelRunStatus @default(PENDING)
+  content            String?        @db.Text
+  providerRequestId  String?        @db.VarChar(255)
+  durationMs         Int?
+  timeToFirstTokenMs Int?
+  promptTokens       Int?
+  completionTokens   Int?
+  totalTokens        Int?
+  costUsd            Decimal?       @db.Decimal(18, 12)
+  errorCode          String?        @db.VarChar(100)
+  createdAt          DateTime       @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
+  comparison         Comparison     @relation(fields: [comparisonId], references: [id], onDelete: Cascade)
+  model              Model?         @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  selectedByVote     Vote?          @relation("SelectedModelRun")
+
+  @@unique([comparisonId, position])
+  @@unique([id, comparisonId, status])
+  @@index([modelId, status, completedAt])
+  @@map("model_runs")
+}
+
+model Vote {
+  id                String           @id @default(cuid())
+  comparisonId      String           @unique
+  /// Fixed to COMPLETED by a database check and included in the comparison foreign key.
+  comparisonStatus  ComparisonStatus @default(COMPLETED)
+  selectedRunId     String
+  /// Fixed to COMPLETED by a database check and included in the selected-run foreign key.
+  selectedRunStatus ModelRunStatus   @default(COMPLETED)
+  createdAt         DateTime         @default(now())
+  comparison        Comparison       @relation("ComparisonVote", fields: [comparisonId, comparisonStatus], references: [id, status], onDelete: Cascade)
+  selectedRun       ModelRun         @relation("SelectedModelRun", fields: [selectedRunId, comparisonId, selectedRunStatus], references: [id, comparisonId, status], onDelete: Cascade)
+
+  @@unique([comparisonId, comparisonStatus])
+  @@unique([selectedRunId, comparisonId, selectedRunStatus])
+  @@map("votes")
+}

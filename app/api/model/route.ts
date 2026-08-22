@@ -44,11 +44,17 @@ export async function POST(request: Request) {
 
   if (decision?.isDenied()) {
     if (decision.reason.isRateLimit()) {
-      return jsonError("You’ve reached the model limit. Please try again later.", 429);
+      return jsonError(
+        "You’ve reached the model limit. Please try again later.",
+        429,
+      );
     }
 
     if (decision.reason.isPromptInjection()) {
-      return jsonError("That prompt could not be sent safely. Please revise it.", 400);
+      return jsonError(
+        "That prompt could not be sent safely. Please revise it.",
+        400,
+      );
     }
 
     return jsonError("This request was blocked. Please try again.", 403);
