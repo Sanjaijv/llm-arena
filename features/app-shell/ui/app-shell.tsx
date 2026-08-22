@@ -234,13 +234,14 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           )}
 
           <div className={styles.account}>
-            {isLoaded && isSignedIn ? (
-              <UserButton />
-            ) : (
-              <SignInButton mode="modal">
-                <button type="button">Sign in</button>
-              </SignInButton>
-            )}
+            {isLoaded &&
+              (isSignedIn ? (
+                <UserButton />
+              ) : (
+                <SignInButton mode="modal">
+                  <button type="button">Sign in</button>
+                </SignInButton>
+              ))}
           </div>
         </div>
       </header>
