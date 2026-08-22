@@ -1,26 +1,110 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  --page: #f3e8dc;
+  --surface: #fffaf5;
+  --surface-raised: #ffffff;
+  --foreground: #2a1915;
+  --muted: #77655e;
+  --muted-soft: #9b8980;
+  --line: #d9c7ba;
+  --line-strong: #bea89a;
+  --coffee: #2b1b17;
+  --coffee-raised: #3a2420;
+  --coffee-text: #f7ede7;
+  --coffee-muted: #bca9a0;
+  --accent: #c8512d;
+  --accent-hover: #a94122;
+  --accent-soft: #f7ddd1;
+  --winner: #2f7855;
+  --winner-soft: #dceee4;
+  --error: #b64035;
+  --error-soft: #f6dedb;
+  --shadow: rgb(58 36 32 / 10%);
 }
 
 @theme inline {
-  --color-background: var(--background);
+  --color-background: var(--page);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  scroll-padding-top: 84px;
 }
 
 body {
-  background: var(--background);
+  min-height: 100%;
+  margin: 0;
+  background: var(--page);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--foreground);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #1c1210;
+    --surface: #271916;
+    --surface-raised: #30201c;
+    --foreground: #f5e9e1;
+    --muted: #bba79d;
+    --muted-soft: #8f7a71;
+    --line: #50362e;
+    --line-strong: #6b493e;
+    --coffee: #120b09;
+    --coffee-raised: #251713;
+    --coffee-text: #f7ede7;
+    --coffee-muted: #bca9a0;
+    --accent: #ed6a3d;
+    --accent-hover: #ff7b4c;
+    --accent-soft: #54291d;
+    --winner: #69b88c;
+    --winner-soft: #203c2e;
+    --error: #ef756a;
+    --error-soft: #4e2623;
+    --shadow: rgb(0 0 0 / 20%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

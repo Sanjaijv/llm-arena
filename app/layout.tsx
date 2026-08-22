@@ -3,6 +3,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import { PostHogIdentity } from "@/features/analytics/posthog-identity";
+import { AppShell } from "@/features/app-shell/ui/app-shell";
 import "@/features/config/server-env";
 
 import "./globals.css";
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <ClerkProvider>
           <PostHogIdentity />
-          {children}
+          <AppShell>{children}</AppShell>
         </ClerkProvider>
       </body>
     </html>
