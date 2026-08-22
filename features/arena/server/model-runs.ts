@@ -18,6 +18,9 @@ const MODEL_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_TOKENS = 2_048;
 const activeModelRunControllers = new Map<string, AbortController>();
 
+export const isModelRunActive = (runId: string): boolean =>
+  activeModelRunControllers.has(runId);
+
 type ClaimedRun = NonNullable<Awaited<ReturnType<typeof claimModelRun>>>;
 
 class ModelRunFailure extends Error {
@@ -381,45 +384,48 @@ export const createClaimedModelRunStream = (
           error,
         });
       } finally {
-        if (activeModelRunControllers.get(run.id) === abortController) {
-          activeModelRunControllers.delete(run.id);
-        }
         activeAbortController = null;
         clearTimeout(timeout);
         requestSignal.removeEventListener("abort", abortFromRequest);
         await iterator?.return?.().catch(() => undefined);
 
-        if (terminal) {
-          await persistTerminalRun(run, terminal);
-          await captureTerminalAnalytics(run, terminal);
-
-          if (terminal.status === "COMPLETED" && !requestSignal.aborted) {
-            enqueue(controller, {
-              type: "complete",
-              runId: run.id,
-              model: terminal.resolvedModel,
-              durationMs: terminal.durationMs,
-              timeToFirstTokenMs: terminal.timeToFirstTokenMs,
-              usage: terminal.usage,
-            });
-          } else if (
-            terminal.status === "FAILED" &&
-            clientError &&
-            !requestSignal.aborted
-          ) {
-            enqueue(controller, {
-              type: "error",
-              code: terminal.errorCode ?? "provider_error",
-              message: clientError.message,
-              retryable: clientError.retryable,
-            });
-          }
-        }
-
         try {
-          controller.close();
-        } catch {
-          // The browser may already have cancelled its reader.
+          if (terminal) {
+            await persistTerminalRun(run, terminal);
+            await captureTerminalAnalytics(run, terminal);
+
+            if (terminal.status === "COMPLETED" && !requestSignal.aborted) {
+              enqueue(controller, {
+                type: "complete",
+                runId: run.id,
+                model: terminal.resolvedModel,
+                durationMs: terminal.durationMs,
+                timeToFirstTokenMs: terminal.timeToFirstTokenMs,
+                usage: terminal.usage,
+              });
+            } else if (
+              terminal.status === "FAILED" &&
+              clientError &&
+              !requestSignal.aborted
+            ) {
+              enqueue(controller, {
+                type: "error",
+                code: terminal.errorCode ?? "provider_error",
+                message: clientError.message,
+                retryable: clientError.retryable,
+              });
+            }
+          }
+
+          try {
+            controller.close();
+          } catch {
+            // The browser may already have cancelled its reader.
+          }
+        } finally {
+          if (activeModelRunControllers.get(run.id) === abortController) {
+            activeModelRunControllers.delete(run.id);
+          }
         }
       }
     },
