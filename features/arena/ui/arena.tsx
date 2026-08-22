@@ -230,33 +230,12 @@ export function Arena({
     void streamRun(runId);
   });
 
-  const cancelActiveRunFromEffect = useEffectEvent(
-    (runId: string, controller: AbortController) => {
-      void fetch(`/api/model-runs/${runId}/stream`, {
-        method: "DELETE",
-        keepalive: true,
-      });
-      controller.abort();
-    },
-  );
-
-  useEffect(() => {
-    const currentControllers = controllers.current;
-    return () =>
-      currentControllers.forEach((controller, runId) =>
-        cancelActiveRunFromEffect(runId, controller),
-      );
-  }, []);
-
   useEffect(() => {
     if (requestedThreadId === activeThreadId.current) {
       return;
     }
 
     activeThreadId.current = requestedThreadId;
-    controllers.current.forEach((controller, runId) =>
-      cancelActiveRunFromEffect(runId, controller),
-    );
     pendingCreation.current = null;
     setThreadId(null);
     setTurns([]);

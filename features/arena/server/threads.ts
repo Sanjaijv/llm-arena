@@ -3,19 +3,23 @@ import "server-only";
 import type { ThreadSnapshot } from "@/features/arena/contract";
 import { prisma } from "@/features/database/server/client";
 
+import { isModelRunActive } from "./model-runs";
+
 const reconcileStaleRuns = async (
   userId: string,
   threadId: string,
 ): Promise<void> => {
   const staleBefore = new Date(Date.now() - 3 * 60_000);
-  const staleRuns = await prisma.modelRun.findMany({
-    where: {
-      comparison: { threadId, userId, status: "IN_PROGRESS" },
-      status: "STREAMING",
-      startedAt: { lt: staleBefore },
-    },
-    select: { id: true, comparisonId: true },
-  });
+  const staleRuns = (
+    await prisma.modelRun.findMany({
+      where: {
+        comparison: { threadId, userId, status: "IN_PROGRESS" },
+        status: "STREAMING",
+        startedAt: { lt: staleBefore },
+      },
+      select: { id: true, comparisonId: true },
+    })
+  ).filter(({ id }) => !isModelRunActive(id));
 
   if (staleRuns.length === 0) {
     return;
@@ -24,7 +28,11 @@ const reconcileStaleRuns = async (
   const completedAt = new Date();
   await prisma.$transaction(async (transaction) => {
     await transaction.modelRun.updateMany({
-      where: { id: { in: staleRuns.map(({ id }) => id) } },
+      where: {
+        id: { in: staleRuns.map(({ id }) => id) },
+        status: "STREAMING",
+        startedAt: { lt: staleBefore },
+      },
       data: {
         status: "CANCELLED",
         completedAt,
