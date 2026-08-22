@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Suspense } from "react";
 
 import { PostHogIdentity } from "@/features/analytics/posthog-identity";
 import { AppShell } from "@/features/app-shell/ui/app-shell";
@@ -32,7 +33,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <ClerkProvider>
           <PostHogIdentity />
-          <AppShell>{children}</AppShell>
+          <Suspense fallback={children}>
+            <AppShell>{children}</AppShell>
+          </Suspense>
         </ClerkProvider>
       </body>
     </html>
