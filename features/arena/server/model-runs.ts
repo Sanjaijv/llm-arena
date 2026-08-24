@@ -122,12 +122,46 @@ type TerminalRun = Readonly<{
   errorCode: string | null;
 }>;
 
+// Prisma raises P2028 when an interactive transaction times out and P2034 on a
+// write conflict or deadlock. Both clear on a fresh attempt, so the concurrent
+// terminal writes of one comparison retry instead of failing on contention.
+const RETRYABLE_TRANSACTION_CODES: readonly string[] = ["P2028", "P2034"];
+const MAX_PERSIST_ATTEMPTS = 3;
+
+const isRetryableTransactionError = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  typeof error.code === "string" &&
+  RETRYABLE_TRANSACTION_CODES.includes(error.code);
+
 const persistTerminalRun = async (
   run: ClaimedRun,
   terminal: TerminalRun,
 ): Promise<void> => {
   const completedAt = new Date();
 
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await runTerminalTransaction(run, terminal, completedAt);
+      return;
+    } catch (error: unknown) {
+      if (
+        isRetryableTransactionError(error) &&
+        attempt < MAX_PERSIST_ATTEMPTS
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+};
+
+const runTerminalTransaction = async (
+  run: ClaimedRun,
+  terminal: TerminalRun,
+  completedAt: Date,
+): Promise<void> => {
   await prisma.$transaction(async (transaction) => {
     await transaction.$queryRaw`
       SELECT "id" FROM "comparisons"
@@ -416,13 +450,30 @@ export const createClaimedModelRunStream = (
               });
             }
           }
+        } catch (persistError: unknown) {
+          // A failed persist must still reach the browser as a clean error
+          // instead of aborting the stream and leaving the run without a result.
+          console.error("Failed to save model run", {
+            comparisonId: run.comparisonId,
+            runId: run.id,
+            error: persistError,
+          });
 
+          if (!requestSignal.aborted) {
+            enqueue(controller, {
+              type: "error",
+              code: "persist_failed",
+              message: "We couldn't save this answer. Please try again.",
+              retryable: true,
+            });
+          }
+        } finally {
           try {
             controller.close();
           } catch {
             // The browser may already have cancelled its reader.
           }
-        } finally {
+
           if (activeModelRunControllers.get(run.id) === abortController) {
             activeModelRunControllers.delete(run.id);
           }
