@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "posthog:setup": "node --env-file=.env.local scripts/setup-posthog.mjs"
   },
   "engines": {
     "node": ">=22.21.0 <23 || >=24.5.0"

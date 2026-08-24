@@ -2,6 +2,7 @@
 
 import { SignInButton } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
@@ -21,6 +22,7 @@ type UiTurn = ThreadSnapshot["turns"][number];
 type PendingCreation = Readonly<{ signature: string; requestId: string }>;
 
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
+const COMPARISON_START_TIMEOUT_MS = 15_000;
 
 const refreshThreadHistory = () =>
   window.dispatchEvent(new Event(THREAD_HISTORY_CHANGED_EVENT));
@@ -30,6 +32,41 @@ const readErrorMessage = async (response: Response): Promise<string> => {
   return typeof body === "object" && body !== null && "message" in body
     ? String(body.message)
     : "Something went wrong. Please try again.";
+};
+
+const createComparisonRequest = async (body: string): Promise<Response> => {
+  let timeoutError: Error | undefined;
+
+  // Reusing the same client request ID makes this retry safe even when the
+  // first request committed but its response was delayed or disconnected.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    let didTimeOut = false;
+    const timeout = setTimeout(() => {
+      didTimeOut = true;
+      controller.abort();
+    }, COMPARISON_START_TIMEOUT_MS);
+
+    try {
+      return await fetch("/api/comparisons", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal: controller.signal,
+      });
+    } catch (error: unknown) {
+      if (!didTimeOut) {
+        throw error;
+      }
+      timeoutError = new Error(
+        "Starting the comparison took too long. Please try again.",
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw timeoutError ?? new Error("The comparison could not be started.");
 };
 
 const formatContext = (tokens: number | null): string => {
@@ -111,6 +148,7 @@ export function Arena({
   const activeThreadId = useRef<string | null>(null);
   const controllers = useRef(new Map<string, AbortController>());
   const pendingCreation = useRef<PendingCreation | null>(null);
+  const viewedPublicThreadId = useRef<string | null>(null);
 
   const selectedModels = selectedIds
     .map((id) => models.find((model) => model.id === id))
@@ -128,6 +166,31 @@ export function Arena({
   const hasActiveRun = turns.some((turn) =>
     turn.runs.some((run) => !TERMINAL_STATUSES.has(run.status)),
   );
+
+  useEffect(() => {
+    if (
+      canInteract ||
+      !initialThread ||
+      viewedPublicThreadId.current === initialThread.id
+    ) {
+      return;
+    }
+
+    viewedPublicThreadId.current = initialThread.id;
+    posthog.capture("public_thread_viewed", {
+      thread_id: initialThread.id,
+      share_source:
+        new URLSearchParams(window.location.search).get("ref") ?? "direct",
+      turn_count: initialThread.turns.length,
+      model_run_count: initialThread.turns.reduce(
+        (count, turn) => count + turn.runs.length,
+        0,
+      ),
+      voted_turn_count: initialThread.turns.filter(
+        ({ voteRunId }) => voteRunId !== null,
+      ).length,
+    });
+  }, [canInteract, initialThread]);
 
   const updateRun = (runId: string, update: (run: UiRun) => UiRun) => {
     setTurns((current) =>
@@ -326,16 +389,14 @@ export function Arena({
     };
 
     try {
-      const response = await fetch("/api/comparisons", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const response = await createComparisonRequest(
+        JSON.stringify({
           clientRequestId,
           threadId,
           prompt: cleanPrompt,
           modelIds: selectedIds,
         }),
-      });
+      );
 
       if (!response.ok) {
         throw new Error(await readErrorMessage(response));
@@ -351,6 +412,7 @@ export function Arena({
       refreshThreadHistory();
       comparison.runs.forEach((run) => void streamRun(run.id));
     } catch (error: unknown) {
+      posthog.captureException(error, { operation: "start_comparison" });
       setPageError(
         error instanceof Error
           ? error.message
@@ -429,10 +491,16 @@ export function Arena({
     }
 
     try {
-      const url = `${window.location.origin}/threads/${encodeURIComponent(threadId)}`;
+      const url = `${window.location.origin}/threads/${encodeURIComponent(threadId)}?ref=share`;
       await navigator.clipboard.writeText(url);
       setShareState("copied");
-    } catch {
+      posthog.capture("thread_shared", {
+        thread_id: threadId,
+        share_method: "clipboard",
+        turn_count: turns.length,
+      });
+    } catch (error: unknown) {
+      posthog.captureException(error, { operation: "copy_share_link" });
       setShareState("error");
     }
   };
@@ -567,6 +635,7 @@ export function Arena({
           </label>
           <textarea
             id="arena-prompt"
+            className="ph-no-capture"
             rows={4}
             maxLength={8_000}
             value={prompt}
@@ -675,7 +744,9 @@ function Turn({
       <header className={styles.turnHeading}>
         <div>
           <p className={styles.eyebrow}>Turn {turn.sequence}</p>
-          <h3>{turn.prompt}</h3>
+          <h3 className="ph-no-capture" data-private>
+            {turn.prompt}
+          </h3>
         </div>
         <span>{turn.runs.length} models</span>
       </header>
@@ -701,7 +772,11 @@ function Turn({
                 </small>
               </header>
 
-              <div className={styles.answerBody} aria-live="polite">
+              <div
+                className={`${styles.answerBody} ph-no-capture`}
+                aria-live="polite"
+                data-private
+              >
                 {run.content ? (
                   <p>{run.content}</p>
                 ) : run.status === "FAILED" ? (

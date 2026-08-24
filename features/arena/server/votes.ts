@@ -29,7 +29,7 @@ export const castVote = async (
 
     if (comparison.vote) {
       if (comparison.vote.selectedRunId === selectedRunId) {
-        return { vote: comparison.vote, created: false };
+        return { vote: comparison.vote, created: false, analytics: null };
       }
 
       throw new VoteConflictError("A winner has already been selected.");
@@ -67,13 +67,26 @@ export const castVote = async (
       },
     });
 
-    return { vote: createdVote, created: true };
+    return {
+      vote: createdVote,
+      created: true,
+      analytics: {
+        threadId: comparison.threadId,
+        selectedModel: selectedRun.requestedModel,
+        selectedPosition: selectedRun.position,
+        candidateCount: completedCount,
+      },
+    };
   });
 
-  if (vote.created) {
+  if (vote.created && vote.analytics) {
     await captureProductEvent(userId, "vote_cast", {
+      thread_id: vote.analytics.threadId,
       comparison_id: comparisonId,
       selected_model_run_id: selectedRunId,
+      selected_model: vote.analytics.selectedModel,
+      selected_position: vote.analytics.selectedPosition,
+      candidate_count: vote.analytics.candidateCount,
     });
   }
 

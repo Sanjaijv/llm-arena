@@ -23,7 +23,6 @@ export async function POST(
   const { runId } = await context.params;
   const decision = await modelRunArcjet
     .protect(request, {
-      userId,
       correlationId: runId,
       metadata: { modelRunId: runId },
     })
