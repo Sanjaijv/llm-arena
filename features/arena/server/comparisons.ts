@@ -3,7 +3,6 @@ import "server-only";
 import { createHash } from "node:crypto";
 
 import type { ComparisonResponse } from "@/features/arena/contract";
-import { captureProductEvent } from "@/features/analytics/server/events";
 import { prisma } from "@/features/database/server/client";
 import type { FreeModel } from "@/features/model-catalog/contract";
 
@@ -233,13 +232,6 @@ export const createComparison = async (
   if (!response) {
     throw new Error("Comparison transaction exhausted its retry budget.");
   }
-
-  await captureProductEvent(userId, "prompt_sent", {
-    thread_id: response.threadId,
-    comparison_id: response.comparisonId,
-    turn_sequence: response.sequence,
-    selected_model_count: response.runs.length,
-  });
 
   return response;
 };

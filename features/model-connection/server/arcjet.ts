@@ -5,6 +5,7 @@ import arcjet, {
   detectBot,
   detectPromptInjection,
   shield,
+  slidingWindow,
   tokenBucket,
 } from "@arcjet/next";
 
@@ -13,7 +14,6 @@ import { serverEnv } from "@/features/config/server-env";
 export const baseArcjet = arcjet({
   client: createRemoteClient({ timeout: 2_000 }),
   key: serverEnv.ARCJET_KEY,
-  characteristics: ["userId"],
   rules: [shield({ mode: "LIVE" })],
 });
 
@@ -34,6 +34,29 @@ export const comparisonCreationArcjet = humanRequestArcjet
   );
 
 export const modelRunArcjet = humanRequestArcjet;
+
+export const publicThreadArcjet = baseArcjet
+  .withRule(
+    detectBot({
+      mode: "LIVE",
+      allow: [
+        "CATEGORY:MONITOR",
+        "CATEGORY:PREVIEW",
+        "CATEGORY:SEARCH_ENGINE",
+        "CATEGORY:SLACK",
+        "CATEGORY:SOCIAL",
+        "CATEGORY:VERCEL",
+      ],
+    }),
+  )
+  .withRule(
+    slidingWindow({
+      mode: "LIVE",
+      characteristics: ["ip.src"],
+      interval: "1m",
+      max: 60,
+    }),
+  );
 
 export const modelRouteArcjet = humanRequestArcjet
   .withRule(detectPromptInjection({ mode: "LIVE" }))

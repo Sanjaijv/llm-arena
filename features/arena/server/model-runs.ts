@@ -38,6 +38,65 @@ const isChatStream = (
 ): value is AsyncIterable<ChatStreamChunk> =>
   typeof value === "object" && value !== null && Symbol.asyncIterator in value;
 
+const abortReason = (signal: AbortSignal): Error =>
+  signal.reason instanceof Error
+    ? signal.reason
+    : new Error(
+        typeof signal.reason === "string" ? signal.reason : "operation_aborted",
+      );
+
+const awaitAbortable = <T>(
+  operation: PromiseLike<T>,
+  signal: AbortSignal,
+): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason(signal));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    Promise.resolve(operation).then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+
+const closeIteratorWithin = async (
+  iterator: AsyncIterator<ChatStreamChunk> | null,
+  timeoutMs: number,
+): Promise<void> => {
+  if (!iterator?.return) {
+    return;
+  }
+
+  let cleanupTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve()
+        .then(() => iterator.return?.())
+        .then(() => undefined)
+        .catch(() => undefined),
+      new Promise<void>((resolve) => {
+        cleanupTimeout = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(cleanupTimeout);
+  }
+};
+
 const toUsage = (usage: ChatUsage | undefined) => ({
   promptTokens: usage?.promptTokens ?? null,
   completionTokens: usage?.completionTokens ?? null,
@@ -122,13 +181,26 @@ type TerminalRun = Readonly<{
   errorCode: string | null;
 }>;
 
+type ComparisonFinished = Readonly<{
+  status: "COMPLETED" | "FAILED" | "CANCELLED";
+  totalRunCount: number;
+  completedRunCount: number;
+  failedRunCount: number;
+  cancelledRunCount: number;
+}>;
+
+type PersistTerminalResult = Readonly<{
+  persisted: boolean;
+  comparisonFinished: ComparisonFinished | null;
+}>;
+
 const persistTerminalRun = async (
   run: ClaimedRun,
   terminal: TerminalRun,
-): Promise<void> => {
+): Promise<PersistTerminalResult> => {
   const completedAt = new Date();
 
-  await prisma.$transaction(async (transaction) => {
+  return prisma.$transaction(async (transaction) => {
     await transaction.$queryRaw`
       SELECT "id" FROM "comparisons"
       WHERE "id" = ${run.comparisonId}
@@ -154,7 +226,7 @@ const persistTerminalRun = async (
     });
 
     if (updated.count !== 1) {
-      return;
+      return { persisted: false, comparisonFinished: null };
     }
 
     const statuses = await transaction.modelRun.groupBy({
@@ -172,6 +244,8 @@ const persistTerminalRun = async (
         statuses.find(({ status }) => status === "COMPLETED")?._count._all ?? 0;
       const failed =
         statuses.find(({ status }) => status === "FAILED")?._count._all ?? 0;
+      const cancelled =
+        statuses.find(({ status }) => status === "CANCELLED")?._count._all ?? 0;
       const status =
         completed > 0 ? "COMPLETED" : failed > 0 ? "FAILED" : "CANCELLED";
 
@@ -179,7 +253,20 @@ const persistTerminalRun = async (
         where: { id: run.comparisonId },
         data: { status, completedAt },
       });
+
+      return {
+        persisted: true,
+        comparisonFinished: {
+          status,
+          totalRunCount: total,
+          completedRunCount: completed,
+          failedRunCount: failed,
+          cancelledRunCount: cancelled,
+        },
+      };
     }
+
+    return { persisted: true, comparisonFinished: null };
   });
 };
 
@@ -229,6 +316,23 @@ const captureTerminalAnalytics = async (
   ]);
 };
 
+const captureComparisonFinished = async (
+  run: ClaimedRun,
+  comparison: ComparisonFinished,
+): Promise<void> =>
+  captureProductEvent(run.comparison.userId, "comparison_finished", {
+    thread_id: run.comparison.threadId,
+    comparison_id: run.comparisonId,
+    turn_sequence: run.comparison.sequence,
+    status: comparison.status,
+    selected_model_count: comparison.totalRunCount,
+    completed_model_count: comparison.completedRunCount,
+    failed_model_count: comparison.failedRunCount,
+    cancelled_model_count: comparison.cancelledRunCount,
+    duration_ms: Date.now() - run.comparison.createdAt.getTime(),
+    vote_eligible: comparison.completedRunCount >= 2,
+  });
+
 export const createClaimedModelRunStream = (
   run: ClaimedRun,
   requestSignal: AbortSignal,
@@ -241,7 +345,13 @@ export const createClaimedModelRunStream = (
       activeAbortController = abortController;
       activeModelRunControllers.set(run.id, abortController);
       const abortFromRequest = () => abortController.abort("client_disconnect");
-      requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+      if (requestSignal.aborted) {
+        abortFromRequest();
+      } else {
+        requestSignal.addEventListener("abort", abortFromRequest, {
+          once: true,
+        });
+      }
       const timeout = setTimeout(
         () => abortController.abort("model_timeout"),
         MODEL_TIMEOUT_MS,
@@ -268,18 +378,24 @@ export const createClaimedModelRunStream = (
       });
 
       try {
-        const messages = await buildConversation(run);
+        const messages = await awaitAbortable(
+          buildConversation(run),
+          abortController.signal,
+        );
         providerStartedAt = performance.now();
-        const upstream = await openRouter.chat.send(
-          {
-            chatRequest: {
-              model: run.requestedModel,
-              messages,
-              maxTokens: MAX_OUTPUT_TOKENS,
-              stream: true,
+        const upstream = await awaitAbortable(
+          openRouter.chat.send(
+            {
+              chatRequest: {
+                model: run.requestedModel,
+                messages,
+                maxTokens: MAX_OUTPUT_TOKENS,
+                stream: true,
+              },
             },
-          },
-          { signal: abortController.signal },
+            { signal: abortController.signal },
+          ),
+          abortController.signal,
         );
 
         if (!isChatStream(upstream)) {
@@ -293,7 +409,10 @@ export const createClaimedModelRunStream = (
         iterator = upstream[Symbol.asyncIterator]();
 
         while (true) {
-          const next = await iterator.next();
+          const next = await awaitAbortable(
+            iterator.next(),
+            abortController.signal,
+          );
           if (next.done) {
             break;
           }
@@ -387,12 +506,19 @@ export const createClaimedModelRunStream = (
         activeAbortController = null;
         clearTimeout(timeout);
         requestSignal.removeEventListener("abort", abortFromRequest);
-        await iterator?.return?.().catch(() => undefined);
+        await closeIteratorWithin(iterator, 1_000);
 
         try {
           if (terminal) {
-            await persistTerminalRun(run, terminal);
-            await captureTerminalAnalytics(run, terminal);
+            const persisted = await persistTerminalRun(run, terminal);
+            if (persisted.persisted) {
+              await Promise.all([
+                captureTerminalAnalytics(run, terminal),
+                persisted.comparisonFinished
+                  ? captureComparisonFinished(run, persisted.comparisonFinished)
+                  : Promise.resolve(),
+              ]);
+            }
 
             if (terminal.status === "COMPLETED" && !requestSignal.aborted) {
               enqueue(controller, {
@@ -441,13 +567,19 @@ export const cancelModelRun = async (
 ): Promise<boolean> => {
   const completedAt = new Date();
 
-  const cancelled = await prisma.$transaction(async (transaction) => {
+  const result = await prisma.$transaction(async (transaction) => {
     const ownedRun = await transaction.modelRun.findFirst({
       where: { id: runId, comparison: { userId } },
-      select: { comparisonId: true },
+      select: {
+        comparisonId: true,
+        requestedModel: true,
+        comparison: {
+          select: { threadId: true, sequence: true, createdAt: true },
+        },
+      },
     });
     if (!ownedRun) {
-      return false;
+      return { cancelled: false, analytics: null };
     }
 
     await transaction.$queryRaw`
@@ -460,10 +592,10 @@ export const cancelModelRun = async (
       select: { status: true },
     });
     if (!run || run.status === "COMPLETED" || run.status === "FAILED") {
-      return false;
+      return { cancelled: false, analytics: null };
     }
     if (run.status === "CANCELLED") {
-      return true;
+      return { cancelled: true, analytics: null };
     }
 
     const updated = await transaction.modelRun.updateMany({
@@ -471,7 +603,7 @@ export const cancelModelRun = async (
       data: { status: "CANCELLED", completedAt },
     });
     if (updated.count !== 1) {
-      return false;
+      return { cancelled: false, analytics: null };
     }
 
     const remaining = await transaction.modelRun.count({
@@ -480,8 +612,9 @@ export const cancelModelRun = async (
         status: { in: ["PENDING", "STREAMING"] },
       },
     });
+    let comparisonFinished: ComparisonFinished | null = null;
     if (remaining === 0) {
-      const [completed, failed] = await Promise.all([
+      const [completed, failed, cancelled] = await Promise.all([
         transaction.modelRun.count({
           where: {
             comparisonId: ownedRun.comparisonId,
@@ -491,6 +624,9 @@ export const cancelModelRun = async (
         transaction.modelRun.count({
           where: { comparisonId: ownedRun.comparisonId, status: "FAILED" },
         }),
+        transaction.modelRun.count({
+          where: { comparisonId: ownedRun.comparisonId, status: "CANCELLED" },
+        }),
       ]);
       const status =
         completed > 0 ? "COMPLETED" : failed > 0 ? "FAILED" : "CANCELLED";
@@ -498,13 +634,63 @@ export const cancelModelRun = async (
         where: { id: ownedRun.comparisonId },
         data: { status, completedAt },
       });
+      comparisonFinished = {
+        status,
+        totalRunCount: completed + failed + cancelled,
+        completedRunCount: completed,
+        failedRunCount: failed,
+        cancelledRunCount: cancelled,
+      };
     }
 
-    return true;
+    return {
+      cancelled: true,
+      analytics: {
+        comparisonId: ownedRun.comparisonId,
+        requestedModel: ownedRun.requestedModel,
+        threadId: ownedRun.comparison.threadId,
+        turnSequence: ownedRun.comparison.sequence,
+        comparisonCreatedAt: ownedRun.comparison.createdAt,
+        comparisonFinished,
+      },
+    };
   });
 
-  if (cancelled) {
+  if (result.cancelled) {
     activeModelRunControllers.get(runId)?.abort("client_cancelled");
   }
-  return cancelled;
+
+  if (result.analytics) {
+    await Promise.all([
+      captureProductEvent(userId, "model_response_cancelled", {
+        thread_id: result.analytics.threadId,
+        comparison_id: result.analytics.comparisonId,
+        model_run_id: runId,
+        requested_model: result.analytics.requestedModel,
+        error_code: "client_cancelled",
+      }),
+      result.analytics.comparisonFinished
+        ? captureProductEvent(userId, "comparison_finished", {
+            thread_id: result.analytics.threadId,
+            comparison_id: result.analytics.comparisonId,
+            turn_sequence: result.analytics.turnSequence,
+            status: result.analytics.comparisonFinished.status,
+            selected_model_count:
+              result.analytics.comparisonFinished.totalRunCount,
+            completed_model_count:
+              result.analytics.comparisonFinished.completedRunCount,
+            failed_model_count:
+              result.analytics.comparisonFinished.failedRunCount,
+            cancelled_model_count:
+              result.analytics.comparisonFinished.cancelledRunCount,
+            duration_ms:
+              Date.now() - result.analytics.comparisonCreatedAt.getTime(),
+            vote_eligible:
+              result.analytics.comparisonFinished.completedRunCount >= 2,
+          })
+        : Promise.resolve(),
+    ]);
+  }
+
+  return result.cancelled;
 };

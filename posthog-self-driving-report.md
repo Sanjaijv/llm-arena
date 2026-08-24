@@ -2,6 +2,26 @@
 
 Generated: 2026-08-21
 
+## Application instrumentation update (2026-08-24)
+
+The application now emits a content-free core funnel (`prompt_sent` →
+`comparison_finished` → `vote_cast`), per-model outcomes
+(`answer_finished`, `model_response_failed`, and
+`model_response_cancelled`), share outcomes (`thread_shared` and
+`public_thread_viewed`), and privacy-mode `$ai_generation` events with model,
+latency, token, cost, and error metadata. Prompt and answer text is not sent as
+event properties and is masked in session replay.
+
+This supersedes the generated report's statements below that no `$ai_*` or
+model-response events exist. PostHog project-side product enables, insights,
+alerts, and scout changes still need to be completed in PostHog.
+
+On 2026-08-24, the hosted **Arena product health** dashboard was created with
+eight insights covering the core funnel, comparison outcomes, model errors and
+latency, winner selection, sharing, retention, and Core Web Vitals. Its setup is
+reproducible with `pnpm posthog:setup`. Threshold alerts remain intentionally
+deferred until representative production data establishes a baseline.
+
 ## Summary
 
 PostHog Self-driving has been configured for LLM Arena. Session Replay, Error Tracking, and Support are enabled server-side; five native signal sources and both Replay Vision monitors are armed and emitting to the inbox. Scout findings will start appearing in the [Self-driving inbox](https://us.posthog.com/project/568919/inbox) within ~30 minutes.

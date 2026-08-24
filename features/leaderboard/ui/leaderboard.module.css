@@ -1,0 +1,371 @@
+.page {
+  width: min(100% - 56px, 1180px);
+  margin: 0 auto;
+  padding: 58px 0 80px;
+}
+
+.pageHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.pageHeading > div {
+  max-width: 650px;
+}
+
+.eyebrow {
+  margin: 0 0 13px;
+  color: var(--muted-soft);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pageHeading h2 {
+  margin: 0;
+  font-size: clamp(35px, 4vw, 52px);
+  font-weight: 620;
+  letter-spacing: -0.055em;
+  line-height: 1.02;
+}
+
+.pageHeading > div > p:last-child {
+  max-width: 570px;
+  margin: 18px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.liveBadge {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.liveBadge i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--winner);
+}
+
+.leaderboardCard {
+  margin-top: 44px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface);
+  box-shadow: 0 16px 44px var(--shadow);
+}
+
+.boardToolbar {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.boardToolbar nav {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--page);
+}
+
+.boardToolbar a {
+  display: grid;
+  min-height: 36px;
+  padding: 0 12px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 9px;
+  text-decoration: none;
+}
+
+.boardToolbar a:hover {
+  color: var(--foreground);
+}
+
+.boardToolbar .selectedSegment {
+  background: var(--surface-raised);
+  box-shadow: 0 1px 4px var(--shadow);
+  color: var(--foreground);
+}
+
+.boardToolbar > span {
+  color: var(--muted-soft);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rankingList {
+  margin: 0;
+  padding: 10px 18px 18px;
+  list-style: none;
+}
+
+.rankingList li {
+  display: grid;
+  grid-template-columns: 42px minmax(190px, 1.2fr) minmax(180px, 1fr) minmax(
+      190px,
+      0.8fr
+    );
+  align-items: center;
+  gap: 18px;
+  min-height: 88px;
+  padding: 0 15px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rankingList li:last-child {
+  border-bottom: 0;
+}
+
+.rankingList .firstPlace {
+  margin: 3px 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--muted-soft) 5%, transparent);
+}
+
+.rank {
+  color: var(--muted-soft);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+}
+
+.rankModel {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 11px;
+}
+
+.rankModel > i {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted-soft) 16%, transparent);
+}
+
+.rankModel > div,
+.winRecord {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.rankModel > div {
+  gap: 3px;
+}
+
+.rankModel strong {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 630;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankModel small {
+  overflow: hidden;
+  color: var(--muted-soft);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.winRecord {
+  gap: 8px;
+}
+
+.winRecord strong {
+  color: var(--accent);
+  font-size: clamp(14px, 1.5vw, 18px);
+  font-weight: 740;
+  letter-spacing: -0.025em;
+}
+
+.winRecord > span {
+  display: block;
+  width: 100%;
+  max-width: 180px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-soft) 17%, transparent);
+}
+
+.winRecord > span > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.rankingList dl {
+  display: flex;
+  gap: 20px;
+  margin: 0;
+}
+
+.rankingList dl div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rankingList dt {
+  color: var(--muted-soft);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 7px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.rankingList dd {
+  margin: 0;
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.emptyState {
+  display: flex;
+  min-height: 340px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.emptyMark {
+  display: grid;
+  width: 45px;
+  height: 45px;
+  place-items: center;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--muted-soft) 12%, transparent);
+  color: var(--muted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.emptyState h3 {
+  margin: 18px 0 0;
+  font-size: 18px;
+  letter-spacing: -0.025em;
+}
+
+.emptyState p {
+  max-width: 420px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.arenaLink,
+.signInButton {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 22px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: white;
+  font-size: 10px;
+  font-weight: 680;
+  text-decoration: none;
+}
+
+.arenaLink:hover,
+.signInButton:hover {
+  background: var(--accent-hover);
+}
+
+.arenaLink span {
+  margin-left: 7px;
+}
+
+@media (max-width: 1060px) {
+  .rankingList li {
+    grid-template-columns: 34px minmax(160px, 1fr) minmax(160px, 1fr);
+  }
+
+  .rankingList dl {
+    display: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .page {
+    width: min(100% - 30px, 1180px);
+    padding: 38px 0 60px;
+  }
+
+  .pageHeading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .pageHeading h2 {
+    font-size: clamp(34px, 10vw, 44px);
+  }
+
+  .leaderboardCard {
+    margin-top: 32px;
+  }
+
+  .boardToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .rankingList {
+    padding: 9px;
+  }
+
+  .rankingList li {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 108px;
+    padding: 14px 10px;
+  }
+
+  .winRecord {
+    grid-column: 2;
+  }
+}

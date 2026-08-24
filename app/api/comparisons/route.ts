@@ -1,5 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
+import { after } from "next/server";
 
+import { captureProductEvent } from "@/features/analytics/server/events";
 import { createComparisonSchema } from "@/features/arena/contract";
 import {
   ComparisonConflictError,
@@ -101,6 +103,17 @@ export async function POST(request: Request) {
       prompt: parsedBody.data.prompt,
       models,
     });
+
+    after(() =>
+      captureProductEvent(userId, "prompt_sent", {
+        thread_id: comparison.threadId,
+        comparison_id: comparison.comparisonId,
+        turn_sequence: comparison.sequence,
+        is_new_thread: parsedBody.data.threadId === null,
+        selected_model_count: comparison.runs.length,
+        selected_models: comparison.runs.map(({ model }) => model.id),
+      }),
+    );
 
     return Response.json(comparison, { status: 201 });
   } catch (error: unknown) {

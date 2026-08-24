@@ -31,3 +31,10 @@ export const arcjetDenialResponse = (decision: {
 
   return jsonError("This request was blocked. Please try again.", 403);
 };
+
+export const publicThreadArcjetDenialResponse = (decision: {
+  reason: { isRateLimit(): boolean };
+}): Response =>
+  decision.reason.isRateLimit()
+    ? jsonError("Too many thread requests. Please try again shortly.", 429)
+    : jsonError("This request was blocked. Please try again.", 403);
