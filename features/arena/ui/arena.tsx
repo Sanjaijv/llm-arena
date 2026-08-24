@@ -24,6 +24,10 @@ type PendingCreation = Readonly<{ signature: string; requestId: string }>;
 const TERMINAL_STATUSES = new Set(["COMPLETED", "FAILED", "CANCELLED"]);
 const COMPARISON_START_TIMEOUT_MS = 15_000;
 
+// Message safe to show to the user verbatim. Any other thrown value (a network
+// failure, a parse error) is replaced with a plain recovery sentence.
+class UserFacingError extends Error {}
+
 const refreshThreadHistory = () =>
   window.dispatchEvent(new Event(THREAD_HISTORY_CHANGED_EVENT));
 
@@ -58,7 +62,7 @@ const createComparisonRequest = async (body: string): Promise<Response> => {
       if (!didTimeOut) {
         throw error;
       }
-      timeoutError = new Error(
+      timeoutError = new UserFacingError(
         "Starting the comparison took too long. Please try again.",
       );
     } finally {
@@ -66,7 +70,9 @@ const createComparisonRequest = async (body: string): Promise<Response> => {
     }
   }
 
-  throw timeoutError ?? new Error("The comparison could not be started.");
+  throw (
+    timeoutError ?? new UserFacingError("The comparison could not be started.")
+  );
 };
 
 const formatContext = (tokens: number | null): string => {
@@ -141,6 +147,9 @@ export function Arena({
     "idle",
   );
   const [isCreating, setIsCreating] = useState(false);
+  const [cancellingRunIds, setCancellingRunIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -399,7 +408,7 @@ export function Arena({
       );
 
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response));
+        throw new UserFacingError(await readErrorMessage(response));
       }
 
       const comparison = comparisonResponseSchema.parse(await response.json());
@@ -414,9 +423,9 @@ export function Arena({
     } catch (error: unknown) {
       posthog.captureException(error, { operation: "start_comparison" });
       setPageError(
-        error instanceof Error
+        error instanceof UserFacingError
           ? error.message
-          : "The comparison could not be started.",
+          : "The comparison could not be started. Please try again.",
       );
     } finally {
       setIsCreating(false);
@@ -425,44 +434,69 @@ export function Arena({
 
   const castVote = async (comparisonId: string, runId: string) => {
     setPageError(null);
-    const response = await fetch(`/api/comparisons/${comparisonId}/vote`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedRunId: runId }),
-    });
 
-    if (!response.ok) {
-      setPageError(await readErrorMessage(response));
-      return;
+    try {
+      const response = await fetch(`/api/comparisons/${comparisonId}/vote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedRunId: runId }),
+      });
+
+      if (!response.ok) {
+        setPageError(await readErrorMessage(response));
+        return;
+      }
+
+      setTurns((current) =>
+        current.map((turn) =>
+          turn.comparisonId === comparisonId
+            ? { ...turn, voteRunId: runId }
+            : turn,
+        ),
+      );
+      refreshThreadHistory();
+    } catch (error: unknown) {
+      posthog.captureException(error, { operation: "cast_vote" });
+      setPageError("Your vote could not be recorded. Please try again.");
     }
-
-    setTurns((current) =>
-      current.map((turn) =>
-        turn.comparisonId === comparisonId
-          ? { ...turn, voteRunId: runId }
-          : turn,
-      ),
-    );
-    refreshThreadHistory();
   };
 
   const cancelRun = async (runId: string) => {
-    setPageError(null);
-    const response = await fetch(`/api/model-runs/${runId}/stream`, {
-      method: "DELETE",
-    });
-
-    if (!response.ok) {
-      setPageError(await readErrorMessage(response));
+    // Ignore repeat clicks while a cancel request for this run is in flight so
+    // rage clicks cannot pile duplicate requests onto the same database lock.
+    if (cancellingRunIds.has(runId)) {
       return;
     }
 
-    controllers.current.get(runId)?.abort();
-    updateRun(runId, (run) => ({
-      ...run,
-      status: "CANCELLED",
-      errorCode: "client_cancelled",
-    }));
+    setPageError(null);
+    setCancellingRunIds((current) => new Set(current).add(runId));
+
+    try {
+      const response = await fetch(`/api/model-runs/${runId}/stream`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        setPageError(await readErrorMessage(response));
+        return;
+      }
+
+      controllers.current.get(runId)?.abort();
+      updateRun(runId, (run) => ({
+        ...run,
+        status: "CANCELLED",
+        errorCode: "client_cancelled",
+      }));
+    } catch (error: unknown) {
+      posthog.captureException(error, { operation: "cancel_model_run" });
+      setPageError("This model could not be cancelled. Please try again.");
+    } finally {
+      setCancellingRunIds((current) => {
+        const next = new Set(current);
+        next.delete(runId);
+        return next;
+      });
+    }
   };
 
   const addModel = (modelId: string) => {
@@ -709,6 +743,7 @@ export function Arena({
               key={turn.comparisonId}
               turn={turn}
               canInteract={canInteract}
+              cancellingRunIds={cancellingRunIds}
               onCancel={(runId) => void cancelRun(runId)}
               onVote={(runId) => void castVote(turn.comparisonId, runId)}
             />
@@ -722,11 +757,13 @@ export function Arena({
 function Turn({
   canInteract,
   turn,
+  cancellingRunIds,
   onCancel,
   onVote,
 }: Readonly<{
   turn: UiTurn;
   canInteract: boolean;
+  cancellingRunIds: ReadonlySet<string>;
   onCancel: (runId: string) => void;
   onVote: (runId: string) => void;
 }>) {
@@ -804,9 +841,12 @@ function Turn({
                   <button
                     className={styles.cancelButton}
                     type="button"
+                    disabled={cancellingRunIds.has(run.id)}
                     onClick={() => onCancel(run.id)}
                   >
-                    Cancel this model
+                    {cancellingRunIds.has(run.id)
+                      ? "Cancelling…"
+                      : "Cancel this model"}
                   </button>
                 )}
 
